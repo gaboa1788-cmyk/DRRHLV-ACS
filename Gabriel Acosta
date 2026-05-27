@@ -1,0 +1,571 @@
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+# ─────────────────────────────────────────────
+#  CONFIGURACIÓN
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="Diseño Estructural — ACI 318 / REP 2021",
+    page_icon="🏗️",
+    layout="wide"
+)
+
+# ─────────────────────────────────────────────
+#  TABLAS DE REFERENCIA
+# ─────────────────────────────────────────────
+BARRAS = {
+    "∅3/8\"":  {"area": 0.71,  "db": 0.952},
+    "∅1/2\"":  {"area": 1.267, "db": 1.270},
+    "∅5/8\"":  {"area": 1.979, "db": 1.588},
+    "∅3/4\"":  {"area": 2.850, "db": 1.905},
+    "∅7/8\"":  {"area": 3.870, "db": 2.223},
+    "∅1\"":    {"area": 5.067, "db": 2.540},
+}
+
+USOS = {
+    "Residencial":      {"cv": 2.0,  "cm_extra": 3.0},
+    "Oficinas":         {"cv": 2.5,  "cm_extra": 3.0},
+    "Comercial":        {"cv": 4.8,  "cm_extra": 3.5},
+    "Escuelas":         {"cv": 3.6,  "cm_extra": 3.2},
+    "Estacionamiento":  {"cv": 2.4,  "cm_extra": 2.8},
+    "Industrial":       {"cv": 6.0,  "cm_extra": 4.0},
+}
+
+APOYOS = {
+    "Simplemente apoyada":      {"coef_h": 16,   "coef_m_pos": 8,  "coef_m_neg": None, "tipo": "simple"},
+    "Un extremo continuo":      {"coef_h": 18.5, "coef_m_pos": 14, "coef_m_neg": 24,   "tipo": "un_cont"},
+    "Ambos extremos continuos": {"coef_h": 21,   "coef_m_pos": 16, "coef_m_neg": 11,   "tipo": "dos_cont"},
+    "Voladizo":                 {"coef_h": 8,    "coef_m_pos": None,"coef_m_neg": 2,   "tipo": "voladizo"},
+}
+
+# ─────────────────────────────────────────────
+#  ENCABEZADO
+# ─────────────────────────────────────────────
+st.title("🏗️ Diseño Estructural de Concreto Reforzado")
+st.caption("ACI 318-19 · REP 2021 (Panamá) · Sistema Internacional (kN, kN·m, MPa)")
+
+modulo = st.tabs(["🧱 Vigas", "🏛️ Columnas", "⬛ Losas"])
+
+# ══════════════════════════════════════════════
+#  TAB 1 — VIGAS
+# ══════════════════════════════════════════════
+with modulo[0]:
+    st.header("Diseño de Vigas")
+    with st.expander("📐 Datos de entrada", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            apoyo_v  = st.selectbox("Condición de apoyo", list(APOYOS.keys()), key="v_apoyo")
+            uso_v    = st.selectbox("Uso del edificio",   list(USOS.keys()),   key="v_uso")
+            Ln_v     = st.number_input("Luz libre Ln (m)", 1.0, 20.0, 5.0, 0.25, key="v_ln")
+        with c2:
+            fc_v     = st.number_input("f'c (MPa)",  17.0, 50.0, 27.46, 0.5, key="v_fc")
+            fy_v     = st.number_input("fy (MPa)",  280.0,550.0,411.9,  5.0, key="v_fy")
+            rec_v    = st.number_input("Recubrimiento (cm)", 2.5, 7.5, 4.0, 0.5, key="v_rec")
+        with c3:
+            best_v   = st.selectbox("Barra estribo",       list(BARRAS.keys()), index=0, key="v_best")
+            blong_v  = st.selectbox("Barra longitudinal",  list(BARRAS.keys()), index=2, key="v_blong")
+
+    if st.button("⚙️ Calcular viga", type="primary", key="btn_viga"):
+        ia = APOYOS[apoyo_v]; iu = USOS[uso_v]
+        Ab_e = BARRAS[best_v]["area"];  db_e = BARRAS[best_v]["db"]
+        Ab_l = BARRAS[blong_v]["area"]; db_l = BARRAS[blong_v]["db"]
+
+        # Sección
+        h_min = np.ceil((Ln_v*100)/ia["coef_h"]/5)*5
+        h_v   = max(h_min, 25.0)
+        b_v   = max(25.0, round(h_v/2/5)*5)
+        d_v   = h_v - rec_v - db_e - db_l/2
+
+        # Cargas kN/m
+        pp   = (b_v/100)*(h_v/100)*24.0
+        cm   = iu["cm_extra"]*(Ln_v/2) + pp
+        cv   = iu["cv"]*(Ln_v/2)
+        Wu   = 1.2*cm + 1.6*cv
+
+        # Solicitaciones
+        tipo = ia["tipo"]
+        if tipo == "voladizo":
+            R=Wu*Ln_v; Vu=R-Wu*(d_v/100); Mu=Wu*Ln_v**2/2
+        elif tipo == "simple":
+            R=Wu*Ln_v/2; Vu=R-Wu*(d_v/100); Mu=Wu*Ln_v**2/8
+        elif tipo == "un_cont":
+            R=Wu*Ln_v/2; Vu=R-Wu*(d_v/100)
+            Mu=max(Wu*Ln_v**2/ia["coef_m_pos"], Wu*Ln_v**2/ia["coef_m_neg"])
+        else:
+            R=Wu*Ln_v/2; Vu=R-Wu*(d_v/100)
+            Mu=max(Wu*Ln_v**2/ia["coef_m_pos"], Wu*Ln_v**2/ia["coef_m_neg"])
+
+        # Vc (kN)
+        Vc = 0.17*np.sqrt(fc_v)*(b_v*10)*(d_v*10)/1000
+        phi_Vc = 0.75*Vc
+
+        # Acero
+        b_mm=b_v*10; d_mm=d_v*10
+        Rn = (Mu*1e6)/(0.9*b_mm*d_mm**2)
+        rho_r = (0.85*fc_v/fy_v)*(1-np.sqrt(max(0,1-2*Rn/(0.85*fc_v))))
+        rho_min = max(0.25*np.sqrt(fc_v)/fy_v, 1.4/fy_v)
+        rho = min(max(rho_r, rho_min), 0.025)
+        As_req = rho*b_v*d_v
+        n_b = max(2, int(np.ceil(As_req/Ab_l)))
+        As_prov = n_b*Ab_l
+        n_comp  = max(2, int(np.ceil(rho_min*b_v*d_v/3/Ab_l)))
+
+        # Estribos
+        Av = 2*Ab_e
+        Vs = (Vu/0.75)-Vc
+        s_crit = max(5.0, np.floor(min(d_v/4, 15.0)))
+        s_cent = max(8.0, np.floor(min(d_v/2, 30.0)))
+        zc = 2*d_v
+
+        # Resultados
+        st.success("✅ Diseño completado")
+        r1,r2,r3 = st.columns(3)
+        with r1:
+            st.metric("Sección b×h", f"{b_v:.0f}×{h_v:.0f} cm")
+            st.metric("Peralte d", f"{d_v:.2f} cm")
+        with r2:
+            st.metric("Wu", f"{Wu:.2f} kN/m")
+            st.metric("Vu", f"{Vu:.2f} kN")
+            st.metric("Mu", f"{Mu:.2f} kN·m")
+        with r3:
+            lbl = "sup (tensión)" if tipo=="voladizo" else "inf (tensión)"
+            st.metric(f"Acero {lbl}", f"{n_b} {blong_v} — As={As_prov:.2f} cm²")
+            st.metric("Estribos zona crítica", f"{best_v} @ {s_crit:.0f} cm")
+            st.metric("Estribos zona central", f"{best_v} @ {s_cent:.0f} cm")
+
+        # Gráficas
+        xs = np.linspace(0, Ln_v, 200)
+        if tipo=="voladizo":
+            Varr=Wu*(Ln_v-xs); Marr=-Wu*(Ln_v-xs)**2/2
+        elif tipo=="simple":
+            Varr=R-Wu*xs; Marr=R*xs-Wu*xs**2/2
+        else:
+            M0=Wu*Ln_v**2/ia["coef_m_neg"]
+            Varr=R-Wu*xs; Marr=-M0+R*xs-Wu*xs**2/2
+
+        fig,(ax1,ax2)=plt.subplots(2,1,figsize=(10,6))
+        fig.patch.set_alpha(0)
+        ax1.plot(xs,Varr,color="#185FA5",lw=2)
+        ax1.fill_between(xs,Varr,alpha=0.12,color="#185FA5")
+        ax1.axhline(Vu,color="#E24B4A",lw=1,ls="--",label=f"Vu={Vu:.1f} kN")
+        ax1.axhline(0,color="gray",lw=0.5); ax1.grid(True,alpha=0.3)
+        ax1.set_ylabel("V (kN)"); ax1.set_title("DFC",fontweight="bold"); ax1.legend()
+        ax2.plot(xs,Marr,color="#1D9E75",lw=2)
+        ax2.fill_between(xs,Marr,alpha=0.12,color="#1D9E75")
+        ax2.axhline(0,color="gray",lw=0.5); ax2.grid(True,alpha=0.3)
+        ax2.set_ylabel("M (kN·m)"); ax2.set_xlabel("x (m)"); ax2.set_title("DMF",fontweight="bold")
+        plt.tight_layout(); st.pyplot(fig)
+
+        # Modelo
+        fig2,(axL,axS)=plt.subplots(1,2,figsize=(12,4),gridspec_kw={"width_ratios":[3,1]})
+        fig2.patch.set_alpha(0)
+        vp=patches.FancyBboxPatch((0,0),Ln_v,h_v/100,boxstyle="round,pad=0.01",
+                                   lw=1.5,edgecolor="#185FA5",facecolor="#E6F1FB")
+        axL.add_patch(vp)
+        y_s=h_v/100-(rec_v+db_e+db_l/2)/100
+        y_i=(rec_v+db_e+db_l/2)/100
+        cs="#E24B4A" if tipo=="voladizo" else "#1D9E75"
+        ci="#1D9E75" if tipo=="voladizo" else "#E24B4A"
+        axL.plot([0,Ln_v],[y_s,y_s],color=cs,lw=2.5,label="Acero superior")
+        axL.plot([0,Ln_v],[y_i,y_i],color=ci,lw=2.0,label="Acero inferior")
+        x=0.03
+        while x<=zc/100 and x<=Ln_v:
+            axL.plot([x,x],[0.01,h_v/100-0.01],color="#444441",lw=0.8); x+=s_crit/100
+        x=zc/100+s_cent/100
+        while x<=Ln_v-zc/100:
+            axL.plot([x,x],[0.01,h_v/100-0.01],color="#888780",lw=0.6); x+=s_cent/100
+        if tipo=="voladizo":
+            ep=patches.Rectangle((-0.15,-0.05),0.15,h_v/100+0.1,fc="#B4B2A9",ec="#5F5E5A",lw=0.8)
+            axL.add_patch(ep); axL.set_xlim(-0.2,Ln_v+0.1)
+        else:
+            axL.set_xlim(-0.1,Ln_v+0.1)
+        axL.set_ylim(-0.15,h_v/100+0.15); axL.set_yticks([])
+        axL.set_xlabel("m"); axL.set_title(f"Vista longitudinal — {apoyo_v}",fontweight="bold")
+        axL.legend(fontsize=9); axL.grid(True,axis="x",alpha=0.3)
+        axL.annotate("",xy=(Ln_v,-0.08),xytext=(0,-0.08),
+                     arrowprops=dict(arrowstyle="<->",color="gray",lw=0.8))
+        axL.text(Ln_v/2,-0.12,f"Ln={Ln_v} m",ha="center",fontsize=9,color="gray")
+        sp=patches.FancyBboxPatch((0,0),b_v,h_v,boxstyle="round,pad=0.5",
+                                   lw=1.5,edgecolor="#185FA5",facecolor="#E6F1FB")
+        axS.add_patch(sp)
+        es=patches.FancyBboxPatch((rec_v,rec_v),b_v-2*rec_v,h_v-2*rec_v,
+                                   boxstyle="round,pad=0.3",lw=1.2,edgecolor="#444441",fc="none")
+        axS.add_patch(es)
+        ns_s = n_b if tipo=="voladizo" else n_comp
+        ns_i = n_comp if tipo=="voladizo" else n_b
+        for i in range(ns_s):
+            cx=rec_v+(b_v-2*rec_v)/(ns_s+1)*(i+1)
+            axS.add_patch(plt.Circle((cx,h_v-rec_v-db_e-db_l/2),db_l/2,color=cs,zorder=3))
+        for i in range(ns_i):
+            cx=rec_v+(b_v-2*rec_v)/(ns_i+1)*(i+1)
+            axS.add_patch(plt.Circle((cx,rec_v+db_e+db_l/2),db_l/2,color=ci,zorder=3))
+        axS.set_xlim(-5,b_v+5); axS.set_ylim(-5,h_v+5); axS.set_aspect("equal")
+        axS.set_title(f"Sección {b_v:.0f}×{h_v:.0f} cm",fontweight="bold")
+        axS.grid(True,alpha=0.2); plt.tight_layout(); st.pyplot(fig2)
+
+# ══════════════════════════════════════════════
+#  TAB 2 — COLUMNAS
+# ══════════════════════════════════════════════
+with modulo[1]:
+    st.header("Diseño de Columnas")
+    st.caption("Columnas con carga axial dominante — ACI 318-19 Sección 22.4")
+
+    with st.expander("📐 Datos de entrada", expanded=True):
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            tipo_col = st.selectbox("Tipo de columna",["Cuadrada","Rectangular","Circular"], key="col_tipo")
+            Pu_col   = st.number_input("Carga axial última Pu (kN)", 100.0, 20000.0, 800.0, 50.0, key="col_pu")
+            Mu_col   = st.number_input("Momento último Mu (kN·m)",  0.0,   2000.0,  50.0,  10.0, key="col_mu")
+        with c2:
+            fc_col   = st.number_input("f'c (MPa)",  17.0, 50.0, 27.46, 0.5, key="col_fc")
+            fy_col   = st.number_input("fy (MPa)",  280.0,550.0, 411.9,  5.0, key="col_fy")
+            rec_col  = st.number_input("Recubrimiento (cm)", 2.5, 7.5, 4.0, 0.5, key="col_rec")
+        with c3:
+            Le_col   = st.number_input("Longitud efectiva Le (m)", 1.0, 12.0, 3.0, 0.25, key="col_le")
+            best_col = st.selectbox("Barra estribo/espiral", list(BARRAS.keys()), index=0, key="col_best")
+            blong_col= st.selectbox("Barra longitudinal",   list(BARRAS.keys()), index=3, key="col_blong")
+
+    if st.button("⚙️ Calcular columna", type="primary", key="btn_col"):
+        Ab_e = BARRAS[best_col]["area"];  db_e = BARRAS[best_col]["db"]
+        Ab_l = BARRAS[blong_col]["area"]; db_l = BARRAS[blong_col]["db"]
+        phi  = 0.65  # compresión con estribos
+
+        # ── Predimensionamiento ──
+        # Ag estimado: Pu/(phi*(0.80*(0.85*fc + rho_g*fy))) con rho_g=0.02
+        rho_g_est = 0.02
+        Ag_est = (Pu_col*1000) / (phi * (0.80*(0.85*fc_col + rho_g_est*(fy_col - 0.85*fc_col))))
+        lado_est = np.sqrt(Ag_est/100)  # cm
+
+        if tipo_col == "Cuadrada":
+            lado = max(25.0, np.ceil(lado_est/5)*5)
+            b_col = h_col = lado
+            Ag = lado**2
+            desc_sec = f"{lado:.0f}×{lado:.0f} cm"
+        elif tipo_col == "Rectangular":
+            h_col = max(30.0, np.ceil(lado_est*1.2/5)*5)
+            b_col = max(25.0, np.ceil(lado_est*0.8/5)*5)
+            Ag = b_col*h_col
+            desc_sec = f"{b_col:.0f}×{h_col:.0f} cm"
+        else:  # Circular
+            D_col = max(30.0, np.ceil(lado_est/5)*5)
+            Ag = np.pi*(D_col/2)**2
+            b_col = h_col = D_col
+            desc_sec = f"D={D_col:.0f} cm"
+
+        # ── Verificación esbeltez ──
+        if tipo_col != "Circular":
+            r_giro = 0.3*min(b_col, h_col)
+        else:
+            r_giro = 0.25*b_col
+        esbeltez = (Le_col*100) / r_giro
+
+        # ── Carga axial nominal ──
+        rho_g = max(0.01, min(0.08, (Pu_col*1000)/(phi*0.80*(0.85*fc_col*Ag*100 + (fy_col-0.85*fc_col)*Ag*100))/1 ))
+        Ast_req = rho_g * Ag       # cm²
+        n_long  = max(4, int(np.ceil(Ast_req / Ab_l)))
+        if tipo_col == "Circular": n_long = max(6, n_long)
+        if n_long % 2 != 0: n_long += 1
+        Ast_prov = n_long * Ab_l
+
+        # Verificar rho real
+        rho_real = Ast_prov / Ag
+        phi_Pn = phi * 0.80 * (0.85*fc_col*(Ag - Ast_prov) + fy_col*Ast_prov) / 1000  # kN
+
+        # ── Estribos ──
+        s_est1 = 16 * db_l          # 16 diámetros barra long
+        s_est2 = 48 * db_e          # 48 diámetros estribo
+        s_est3 = min(b_col, h_col)  # menor dimensión
+        s_col  = np.floor(min(s_est1, s_est2, s_est3))
+
+        # ── Momento nominal (interacción simplificada) ──
+        d_col  = h_col - rec_col - db_e - db_l/2
+        e_real = (Mu_col*100)/(Pu_col) if Pu_col > 0 else 0  # cm
+        e_min  = max(1.5, 0.03*h_col)  # excentricidad mínima ACI
+        e_dis  = max(e_real, e_min)
+
+        # Resultados
+        st.success("✅ Diseño completado")
+        r1,r2,r3 = st.columns(3)
+        with r1:
+            st.metric("Sección adoptada", desc_sec)
+            st.metric("Área bruta Ag", f"{Ag:.1f} cm²")
+            st.metric("Esbeltez kLu/r", f"{esbeltez:.1f}" + (" ⚠️ >22, verificar" if esbeltez>22 else " ✅"))
+        with r2:
+            st.metric("Pu", f"{Pu_col:.1f} kN")
+            st.metric("φPn", f"{phi_Pn:.1f} kN")
+            st.metric("φPn ≥ Pu", "✅ OK" if phi_Pn>=Pu_col else "⚠️ Aumentar sección")
+        with r3:
+            st.metric("ρg real", f"{rho_real*100:.2f}%")
+            st.metric("Acero longitudinal", f"{n_long} {blong_col}")
+            st.metric("Ast provisto", f"{Ast_prov:.2f} cm²")
+            st.metric("Estribos", f"{best_col} @ {s_col:.0f} cm")
+
+        # Diagrama interacción simplificado
+        st.markdown("##### Diagrama de interacción simplificado (P-M)")
+        phi_Pn_max = phi * 0.80 * (0.85*fc_col*(Ag-Ast_prov) + fy_col*Ast_prov) / 1000
+        phi_Mn_bal = phi * 0.9 * Ast_prov/2 * fy_col * (d_col - h_col/2) / 1e5
+        phi_Mn_bal = max(phi_Mn_bal, 10.0)
+
+        P_pts = [phi_Pn_max, phi_Pn_max*0.7, phi_Pn_max*0.4, phi_Pn_max*0.1, 0]
+        M_pts = [0, phi_Mn_bal*0.5, phi_Mn_bal*0.85, phi_Mn_bal, phi_Mn_bal*0.6]
+
+        fig3, ax = plt.subplots(figsize=(7,5))
+        fig3.patch.set_alpha(0)
+        ax.plot(M_pts, P_pts, color="#185FA5", lw=2, label="Diagrama P-M")
+        ax.fill_betweenx(P_pts, M_pts, alpha=0.10, color="#185FA5")
+        ax.scatter([Mu_col],[Pu_col],color="#E24B4A",zorder=5,s=80,label=f"Punto diseño ({Mu_col:.0f},{Pu_col:.0f})")
+        ax.axhline(0,color="gray",lw=0.5); ax.axvline(0,color="gray",lw=0.5)
+        ax.set_xlabel("M (kN·m)",fontsize=11); ax.set_ylabel("P (kN)",fontsize=11)
+        ax.set_title("Diagrama de interacción P-M (simplificado)",fontweight="bold")
+        ax.legend(fontsize=10); ax.grid(True,alpha=0.3)
+        st.pyplot(fig3)
+
+        # Sección transversal columna
+        fig4, ax2 = plt.subplots(figsize=(4,4)); fig4.patch.set_alpha(0)
+        if tipo_col == "Circular":
+            circ_col = plt.Circle((b_col/2,b_col/2),b_col/2,fc="#E6F1FB",ec="#185FA5",lw=1.5)
+            ax2.add_patch(circ_col)
+            est_circ = plt.Circle((b_col/2,b_col/2),(b_col/2-rec_col),fc="none",ec="#444441",lw=1.2)
+            ax2.add_patch(est_circ)
+            R_barras = b_col/2 - rec_col - db_e - db_l/2
+            for i in range(n_long):
+                ang = 2*np.pi*i/n_long
+                cx = b_col/2 + R_barras*np.cos(ang)
+                cy = b_col/2 + R_barras*np.sin(ang)
+                ax2.add_patch(plt.Circle((cx,cy),db_l/2,color="#E24B4A",zorder=3))
+            ax2.set_xlim(-5,b_col+5); ax2.set_ylim(-5,b_col+5)
+        else:
+            cp=patches.FancyBboxPatch((0,0),b_col,h_col,boxstyle="round,pad=0.5",
+                                       lw=1.5,ec="#185FA5",fc="#E6F1FB")
+            ax2.add_patch(cp)
+            ep=patches.FancyBboxPatch((rec_col,rec_col),b_col-2*rec_col,h_col-2*rec_col,
+                                       boxstyle="round,pad=0.3",lw=1.2,ec="#444441",fc="none")
+            ax2.add_patch(ep)
+            # Barras en las 4 esquinas + intermedias
+            n_lado = max(2, n_long//4)
+            barras_x = np.linspace(rec_col+db_e+db_l/2, b_col-rec_col-db_e-db_l/2, n_lado)
+            barras_y = np.linspace(rec_col+db_e+db_l/2, h_col-rec_col-db_e-db_l/2, n_lado)
+            posiciones = set()
+            for x in barras_x: posiciones.add((round(x,1), round(rec_col+db_e+db_l/2,1)))
+            for x in barras_x: posiciones.add((round(x,1), round(h_col-rec_col-db_e-db_l/2,1)))
+            for y in barras_y: posiciones.add((round(rec_col+db_e+db_l/2,1), round(y,1)))
+            for y in barras_y: posiciones.add((round(b_col-rec_col-db_e-db_l/2,1), round(y,1)))
+            for cx,cy in list(posiciones)[:n_long]:
+                ax2.add_patch(plt.Circle((cx,cy),db_l/2,color="#E24B4A",zorder=3))
+            ax2.set_xlim(-5,b_col+5); ax2.set_ylim(-5,h_col+5)
+        ax2.set_aspect("equal")
+        ax2.set_title(f"Sección columna\n{desc_sec}",fontweight="bold")
+        ax2.grid(True,alpha=0.2)
+        ax2.text(b_col/2,-3.5,f"ρg={rho_real*100:.2f}%",ha="center",fontsize=9,color="gray")
+        st.pyplot(fig4)
+
+        # Info normativa
+        with st.expander("📋 Verificaciones normativas"):
+            st.markdown(f"""
+| Parámetro | Valor | Límite ACI | Estado |
+|---|---|---|---|
+| ρg mínimo | {rho_real*100:.2f}% | ≥ 1% | {"✅" if rho_real>=0.01 else "⚠️"} |
+| ρg máximo | {rho_real*100:.2f}% | ≤ 8% | {"✅" if rho_real<=0.08 else "⚠️"} |
+| Esbeltez | {esbeltez:.1f} | ≤ 22 (columna corta) | {"✅" if esbeltez<=22 else "⚠️ esbelta"} |
+| φPn ≥ Pu | {phi_Pn:.1f} ≥ {Pu_col:.1f} kN | φ=0.65 | {"✅" if phi_Pn>=Pu_col else "⚠️"} |
+| Espaciado estribos | {s_col:.0f} cm | min(16db, 48de, b) | ✅ |
+            """)
+
+# ══════════════════════════════════════════════
+#  TAB 3 — LOSAS
+# ══════════════════════════════════════════════
+with modulo[2]:
+    st.header("Diseño de Losas")
+    st.caption("Losas macizas en una y dos direcciones — ACI 318-19 Sección 8")
+
+    with st.expander("📐 Datos de entrada", expanded=True):
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            tipo_losa = st.selectbox("Tipo de losa",["Una dirección","Dos direcciones"], key="ls_tipo")
+            uso_losa  = st.selectbox("Uso del edificio", list(USOS.keys()), key="ls_uso")
+            La_losa   = st.number_input("Luz menor La (m)",  1.0, 12.0, 4.0, 0.25, key="ls_la")
+            Lb_losa   = st.number_input("Luz mayor Lb (m)",  1.0, 15.0, 6.0, 0.25, key="ls_lb")
+        with c2:
+            fc_losa   = st.number_input("f'c (MPa)",  17.0, 50.0, 27.46, 0.5, key="ls_fc")
+            fy_losa   = st.number_input("fy (MPa)",  280.0,550.0, 411.9,  5.0, key="ls_fy")
+            rec_losa  = st.number_input("Recubrimiento (cm)", 1.5, 5.0, 2.5, 0.5, key="ls_rec")
+        with c3:
+            apoyo_losa = st.selectbox("Condición de apoyo",
+                                       ["Continua (ambos extremos)","Simplemente apoyada","Voladizo"],
+                                       key="ls_apoyo")
+            blong_losa = st.selectbox("Barra de refuerzo", list(BARRAS.keys()), index=1, key="ls_blong")
+
+    if st.button("⚙️ Calcular losa", type="primary", key="btn_losa"):
+        iu_l  = USOS[uso_losa]
+        Ab_l  = BARRAS[blong_losa]["area"]
+        db_l  = BARRAS[blong_losa]["db"]
+
+        # ── Relación de lados ──
+        beta = Lb_losa / La_losa
+        dir2 = (tipo_losa == "Dos direcciones") and (beta <= 2.0)
+
+        # ── Espesor mínimo ──
+        if apoyo_losa == "Voladizo":
+            coef_h = 10
+        elif apoyo_losa == "Simplemente apoyada":
+            coef_h = 20
+        else:
+            coef_h = 28
+
+        h_min_losa = (La_losa*100) / coef_h
+        h_losa = max(10.0, np.ceil(h_min_losa/2)*2)  # múltiplos de 2 cm
+
+        # Peralte
+        d_losa = h_losa - rec_losa - db_l/2
+
+        # ── Cargas kN/m² ──
+        pp_losa  = (h_losa/100) * 24.0
+        cm_losa  = pp_losa + iu_l["cm_extra"]
+        cv_losa  = iu_l["cv"]
+        Wu_losa  = 1.2*cm_losa + 1.6*cv_losa  # kN/m²
+
+        # ── Momento por metro de ancho ──
+        if apoyo_losa == "Voladizo":
+            Mu_la = Wu_losa * La_losa**2 / 2
+        elif apoyo_losa == "Simplemente apoyada":
+            Mu_la = Wu_losa * La_losa**2 / 8
+        else:
+            Mu_la = Wu_losa * La_losa**2 / 16  # continua
+
+        if dir2:
+            # Coeficientes ACI (tabla 8.10.4) simplificados
+            Ca = 1/(1 + (La_losa/Lb_losa)**4)
+            Cb = 1 - Ca
+            Mu_la = Ca * Wu_losa * La_losa**2 / 8
+            Mu_lb = Cb * Wu_losa * Lb_losa**2 / 8
+        else:
+            Mu_lb = Wu_losa * Lb_losa**2 / 8  # dirección secundaria (solo temperatura)
+
+        # ── Acero dirección principal ──
+        b_losa = 100  # cm (franja de 1 m)
+        Rn_la = (Mu_la*1e6) / (0.9 * b_losa*10 * (d_losa*10)**2)
+        rho_la = (0.85*fc_losa/fy_losa)*(1-np.sqrt(max(0,1-2*Rn_la/(0.85*fc_losa))))
+        rho_min_l = max(0.0018, 1.4/fy_losa)  # ACI 8.6.1
+        rho_la = max(rho_la, rho_min_l)
+        As_la = rho_la * b_losa * d_losa  # cm²/m
+
+        # Espaciado
+        s_la = min(b_losa*Ab_l/As_la, min(3*h_losa, 45.0))
+        s_la = np.floor(s_la)
+        As_la_prov = b_losa*Ab_l/s_la
+
+        # ── Acero dirección secundaria ──
+        if dir2:
+            Rn_lb = (Mu_lb*1e6)/(0.9*b_losa*10*(d_losa*10)**2)
+            rho_lb = (0.85*fc_losa/fy_losa)*(1-np.sqrt(max(0,1-2*Rn_lb/(0.85*fc_losa))))
+            rho_lb = max(rho_lb, rho_min_l)
+            As_lb = rho_lb*b_losa*d_losa
+        else:
+            As_lb = rho_min_l*b_losa*d_losa  # temperatura y contracción
+
+        s_lb = min(b_losa*Ab_l/As_lb, min(3*h_losa, 45.0))
+        s_lb = np.floor(s_lb)
+        As_lb_prov = b_losa*Ab_l/s_lb
+
+        # ── Cortante (sin refuerzo, solo concreto) ──
+        Vu_losa = Wu_losa*(La_losa/2 - d_losa/100)
+        Vc_losa = 0.17*np.sqrt(fc_losa)*(b_losa*10)*(d_losa*10)/1000
+
+        # Resultados
+        st.success("✅ Diseño completado")
+        r1,r2,r3 = st.columns(3)
+        with r1:
+            st.metric("Espesor h", f"{h_losa:.0f} cm")
+            st.metric("Peralte d", f"{d_losa:.2f} cm")
+            st.metric("Wu", f"{Wu_losa:.2f} kN/m²")
+        with r2:
+            st.metric("Mu dirección La", f"{Mu_la:.2f} kN·m/m")
+            st.metric("As La", f"{As_la:.2f} cm²/m")
+            st.metric(f"Refuerzo La ({La_losa} m)", f"{blong_losa} @ {s_la:.0f} cm")
+        with r3:
+            lbl_lb = "Lb (dos dir.)" if dir2 else "Lb (temperatura)"
+            st.metric(f"Mu dir. {lbl_lb}", f"{Mu_lb:.2f} kN·m/m")
+            st.metric(f"As Lb", f"{As_lb:.2f} cm²/m")
+            st.metric(f"Refuerzo Lb ({Lb_losa} m)", f"{blong_losa} @ {s_lb:.0f} cm")
+
+        # Verificación cortante
+        ok_v = Vu_losa <= 0.75*Vc_losa
+        st.metric("Verificación cortante Vu ≤ φVc",
+                  f"{Vu_losa:.2f} ≤ {0.75*Vc_losa:.2f} kN/m",
+                  delta="✅ OK" if ok_v else "⚠️ Aumentar espesor")
+
+        # Planta de la losa
+        st.markdown("##### Vista en planta de la losa")
+        fig5, ax_p = plt.subplots(figsize=(8,5)); fig5.patch.set_alpha(0)
+        losa_rect = patches.Rectangle((0,0),Lb_losa,La_losa,
+                                        lw=1.5,ec="#185FA5",fc="#E6F1FB")
+        ax_p.add_patch(losa_rect)
+
+        # Barras dirección La (horizontales)
+        y=s_la/100/2
+        while y<=La_losa:
+            ax_p.plot([0,Lb_losa],[y,y],color="#E24B4A",lw=0.8,alpha=0.7)
+            y+=s_la/100
+
+        # Barras dirección Lb (verticales)
+        x=s_lb/100/2
+        while x<=Lb_losa:
+            ax_p.plot([x,x],[0,La_losa],color="#1D9E75",lw=0.6,alpha=0.5,ls="--")
+            x+=s_lb/100
+
+        ax_p.set_xlim(-0.2,Lb_losa+0.8); ax_p.set_ylim(-0.2,La_losa+0.5)
+        ax_p.set_xlabel("Lb (m)"); ax_p.set_ylabel("La (m)")
+        ax_p.set_title(f"Vista en planta — Losa {'2 dir.' if dir2 else '1 dir.'} — h={h_losa:.0f} cm",fontweight="bold")
+        from matplotlib.lines import Line2D
+        ley = [Line2D([0],[0],color="#E24B4A",lw=1.5,label=f"∅{blong_losa} @{s_la:.0f}cm (La)"),
+               Line2D([0],[0],color="#1D9E75",lw=1.5,ls="--",label=f"∅{blong_losa} @{s_lb:.0f}cm (Lb)")]
+        ax_p.legend(handles=ley,fontsize=9)
+        ax_p.annotate("",xy=(Lb_losa,-0.12),xytext=(0,-0.12),
+                      arrowprops=dict(arrowstyle="<->",color="gray",lw=0.8))
+        ax_p.text(Lb_losa/2,-0.17,f"Lb={Lb_losa} m",ha="center",fontsize=9,color="gray")
+        ax_p.annotate("",xy=(-0.12,La_losa),xytext=(-0.12,0),
+                      arrowprops=dict(arrowstyle="<->",color="gray",lw=0.8))
+        ax_p.text(-0.16,La_losa/2,f"La={La_losa} m",ha="center",fontsize=9,color="gray",rotation=90)
+        st.pyplot(fig5)
+
+        # Sección de la losa
+        fig6, ax_s = plt.subplots(figsize=(9,2.5)); fig6.patch.set_alpha(0)
+        losa_s = patches.Rectangle((0,0),La_losa,h_losa/100,
+                                     lw=1.5,ec="#185FA5",fc="#E6F1FB")
+        ax_s.add_patch(losa_s)
+        y_bar = (rec_losa+db_l/2)/100
+        x=s_la/100/2
+        while x<=La_losa:
+            ax_s.add_patch(plt.Circle((x,y_bar),db_l/200,color="#E24B4A",zorder=3))
+            x+=s_la/100
+        ax_s.set_xlim(-0.1,La_losa+0.1); ax_s.set_ylim(-0.05,h_losa/100+0.05)
+        ax_s.set_aspect("equal"); ax_s.set_yticks([])
+        ax_s.set_xlabel("La (m)")
+        ax_s.set_title(f"Sección transversal — h={h_losa:.0f} cm, d={d_losa:.1f} cm",fontweight="bold")
+        ax_s.annotate("",xy=(La_losa,-0.025),xytext=(0,-0.025),
+                      arrowprops=dict(arrowstyle="<->",color="gray",lw=0.8))
+        ax_s.text(La_losa/2,-0.035,f"La={La_losa} m",ha="center",fontsize=9,color="gray")
+        ax_s.grid(True,axis="x",alpha=0.3); st.pyplot(fig6)
+
+        # Tabla resumen
+        with st.expander("📋 Tabla resumen completa"):
+            st.table({
+                "Parámetro":["h mínimo ACI","h adoptado","d peralte","Wu","Mu La","Mu Lb",
+                             "As La req","As La prov","Espaciado La","As Lb req","As Lb prov",
+                             "Espaciado Lb","Vu","φVc","β=Lb/La","Tipo diseño"],
+                "Valor":[f"{h_min_losa:.1f} cm",f"{h_losa:.0f} cm",f"{d_losa:.2f} cm",
+                         f"{Wu_losa:.2f} kN/m²",f"{Mu_la:.2f} kN·m/m",f"{Mu_lb:.2f} kN·m/m",
+                         f"{As_la:.2f} cm²/m",f"{As_la_prov:.2f} cm²/m",f"{s_la:.0f} cm",
+                         f"{As_lb:.2f} cm²/m",f"{As_lb_prov:.2f} cm²/m",f"{s_lb:.0f} cm",
+                         f"{Vu_losa:.2f} kN/m",f"{0.75*Vc_losa:.2f} kN/m",
+                         f"{beta:.2f}",
+                         "2 direcciones ✅" if dir2 else "1 dirección"],
+            })
+
+# ─────────────────────────────────────────────
+#  PIE DE PÁGINA
+# ─────────────────────────────────────────────
+st.divider()
+st.caption("🏗️ Diseño Estructural · ACI 318-19 · REP 2021 · Sistema SI · Universidad de Panamá — Ingeniería en Infraestructura")
